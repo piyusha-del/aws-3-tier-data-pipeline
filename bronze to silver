@@ -1,0 +1,71 @@
+"""
+# Job Name        : Bronze_to_Silver_Load
+# Owner           : Piyusha
+# Created Date    : 2026-03-29
+# Last Modified   : NA
+# Version         : 1.0.0
+# Environment     : Prod
+# Layer           : BRONZE → SILVER
+# Frequency       :  Once
+# Job Type       : Batch ETL (Full Load)
+"""
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+import json
+import boto3
+
+bucket='b20class'
+key='config/Config.json'
+
+spark=SparkSession.builder.appName("Bronze_to_Silver_Load").getOrCreate()
+
+s3 = boto3.client('s3')
+
+def read_config_from_s3(bucket, key):
+    s3 = boto3.client('s3')
+    response = s3.get_object(Bucket=bucket, Key=key)
+    content = response['Body'].read().decode('utf-8')
+    config = json.loads(content)
+    return config
+
+config_data = read_config_from_s3(bucket, key)
+
+
+# Access parameters from the config data
+table_list = config_data.get("tables", [])
+host = config_data.get("host", "")
+username = config_data.get("username", "")
+pwd = config_data.get("pwd", "")
+driver = config_data.get("driver", "")
+bronze_layer_path = config_data.get("bronze_layer_path", "")
+silver_layer_path = config_data.get("silver_layer_path", "")
+
+print(table_list)
+print(host)
+print(username)
+print(pwd)
+print(driver)
+print(bronze_layer_path)
+print(silver_layer_path)
+
+#read csv
+def read_csv(spark,path,delimiter=',',inferschema='false',header='false'):
+    df=spark.read.format("CSV").option("header",header).option("inferschema", inferschema).option("delimiter", delimiter).load(path)
+    df=df.dropDuplicates()
+    return df
+
+#write parquet
+def write_data_parquet_fs(spark,df,path):
+    df.write.format("parquet").save(path)
+    print("Data Successfully return in FS") 
+
+for table in table_list:
+    print("Data Load Started for ",table)
+    df=read_csv(spark, bronze_layer_path+table,delimiter=',',inferschema='true',header='true')
+    df.show()
+    write_data_parquet_fs(spark, df, silver_layer_path+table)
+
+print("********Job Successfully Completed**********")
