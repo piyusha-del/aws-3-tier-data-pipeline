@@ -1,0 +1,95 @@
+"""
+# Job Name        : Gold_to_Platinum_Load
+# Owner           : Piyusha
+# Created Date    : 2026-03-29
+# Last Modified   : NA
+# Version         : 1.0.0
+# Environment     : Prod
+# Layer           : SILVER → GOLD
+# Frequency       :  Daily
+# Job Type       : Batch ETL (Full and Incremental Load)
+"""
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+import json
+import boto3
+from datetime import datetime
+
+
+
+bucket='b20class'
+key='config/Config.json'
+
+spark=SparkSession.builder.appName("Gold_to_Platinum_Load").getOrCreate()
+
+s3 = boto3.client('s3')
+
+folder_date = datetime.today().strftime("%Y-%m-%d")
+print(folder_date)
+
+def read_config_from_s3(bucket, key):
+    s3 = boto3.client('s3')
+    response = s3.get_object(Bucket=bucket, Key=key)
+    content = response['Body'].read().decode('utf-8')
+    config = json.loads(content)
+    return config
+
+config_data = read_config_from_s3(bucket, key)
+
+
+# Access parameters from the config data
+table_list = config_data.get("tables", [])
+host = config_data.get("host", "")
+username = config_data.get("username", "")
+pwd = config_data.get("pwd", "")
+driver = config_data.get("driver", "")
+bronze_layer_path = config_data.get("bronze_layer_path", "")
+silver_layer_path = config_data.get("silver_layer_path", "")
+gold_layer_path = config_data.get("gold_layer_path", "")
+cmp_dtl_tgt_tbl = config_data.get("cmp_dtl_tgt_tbl", "")
+platinum_layer_path = config_data.get("platinum_layer_path", "")
+revenue_tbl = config_data.get("revenue_tbl", "")
+
+print(table_list)
+print(host)
+print(username)
+print(pwd)
+print(driver)
+print(bronze_layer_path)
+print(silver_layer_path)
+print(gold_layer_path)
+print(platinum_layer_path)
+print(revenue_tbl)
+
+
+def read_parquet(spark,path):
+    df=spark.read.format("parquet").load(path)
+    return df
+
+
+#read data 
+
+df_sb=read_parquet(spark,gold_layer_path+'subscriber_details')
+
+df_sb.createOrReplaceTempView("subscriber")
+
+revenue_report=spark.sql("""
+					select 
+					SD.country as Country,
+					count(SD.subscriberid) AS total_subscriber,
+					sum(coalesce(pre_amount,pos_amount,0)) as total_revenue
+					FROM subscriber SD
+					group by SD.country,Active_flag having SD.Active_flag='A'
+					""")
+
+
+revenue_report.show()
+
+#write Data : 
+def write_data_fs(spark,df,path,delim=',',header="true"):
+    df.write.format("CSV").option("delimiter",delim).option("header",header).save(path)
+    print("Data Successfully return in FS")
+
+write_data_fs(spark, revenue_report, platinum_layer_path+revenue_tbl+folder_date)
