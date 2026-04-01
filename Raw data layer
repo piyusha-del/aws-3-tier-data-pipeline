@@ -1,0 +1,69 @@
+"""
+# Job Name        : Source_to_Bronze_Load
+# Owner           : Piyusha
+# Created Date    : 2026-03-29
+# Last Modified   : NA
+# Version         : 1.0.0
+# Environment     : Prod
+# Layer           : RDBMS → BRONZE
+# Frequency       :  Once
+# Job Type       : Batch ETL (Full Load)
+"""
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+import json
+import boto3
+
+bucket='b20class'
+key='config/Config.json'
+
+spark=SparkSession.builder.appName("SourceToBronze").getOrCreate()
+
+s3 = boto3.client('s3')
+
+def read_config_from_s3(bucket, key):
+    s3 = boto3.client('s3')
+    response = s3.get_object(Bucket=bucket, Key=key)
+    content = response['Body'].read().decode('utf-8')
+    config = json.loads(content)
+    return config
+
+config_data = read_config_from_s3(bucket, key)
+
+
+# Access parameters from the config data
+table_list = config_data.get("tables", [])
+host = config_data.get("host", "")
+username = config_data.get("username", "")
+pwd = config_data.get("pwd", "")
+driver = config_data.get("driver", "")
+bronze_layer_path = config_data.get("bronze_layer_path", "")
+
+print(table_list)
+print(host)
+print(username)
+print(pwd)
+print(driver)
+print(bronze_layer_path)
+
+
+#read data function from RDBMS
+def read_data_from_rdbms(spark,host,username,pwd,driver,table_name):
+    df=spark.read.format("JDBC").option("url",host).option("user", username).option("password", pwd)\
+        .option("driver", driver).option("dbtable", table_name).load()
+    return df
+
+def write_data_fs(spark,df,path,delim=',',header="true"):
+    df.write.format("CSV").option("delimiter",delim).option("header",header).save(path)
+    print("Data Successfully return in FS")
+
+for table in table_list:
+    print("Data Load Started for ",table)
+    df=read_data_from_rdbms(spark, host, username, pwd, driver, table)
+    df.show()
+    write_data_fs(spark, df, bronze_layer_path+table,header="true")
+
+print("********Job Successfully Completed**********")
